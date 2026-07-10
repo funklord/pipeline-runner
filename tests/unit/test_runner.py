@@ -339,10 +339,11 @@ def _make_pipeline_ctx(mocker: MockerFixture, child_pipeline: object, call_stack
     spec.get_pipeline.return_value = child_pipeline
     spec.get_available_pipelines.return_value = ["custom.child"]
 
-    ctx = MagicMock(spec=PipelineRunContext)
+    ctx = mocker.MagicMock()
     ctx.spec = spec
     ctx.pipeline_call_stack = call_stack
     ctx.pipeline_variables = {}
+    ctx.repository.path = "/repo"
     return ctx
 
 
@@ -450,11 +451,36 @@ def test_factory_dispatches_pipeline_steps_to_pipeline_step_runner() -> None:
     assert inline_wrapper.step.is_pipeline_step is False
 
 
-def test_pipeline_step_runner_rejects_imported_child_pipeline(mocker: MockerFixture) -> None:
-    imported_child = PipelineImport(**{"import": "shared@slug"})
+def test_pipeline_step_runner_rejects_cross_repo_imported_child(mocker: MockerFixture) -> None:
+    imported_child = PipelineImport(**{"import": "other-repo:main:some-pipeline"})
     ctx = _make_pipeline_ctx(mocker, imported_child, ["custom.parent"])
 
     step = Step(type="pipeline", custom="imported")
 
-    with pytest.raises(UnsupportedPipelineImportError, match="shared@slug"):
+    with pytest.raises(UnsupportedPipelineImportError, match="other-repo:main:some-pipeline"):
         PipelineStepRunner(step, ctx).run()
+
+
+def test_pipeline_step_runner_resolves_local_imported_child(mocker: MockerFixture) -> None:
+    imported_child = PipelineImport(**{"import": "br@import-root"})
+    ctx = _make_pipeline_ctx(mocker, imported_child, ["custom.parent"])
+    ctx.repository.path = "/repo"
+
+    resolved = mocker.MagicMock()
+    resolved.get_steps.return_value = [MagicMock(spec=StepWrapper)]
+    resolved.get_variables.return_value = []
+    mock_resolve = mocker.patch("pipeline_runner.runner.resolve_pipeline_import", return_value=resolved)
+
+    mock_runner = MagicMock(spec=StepRunner)
+    mock_runner.run.return_value = 0
+    mock_factory = mocker.patch("pipeline_runner.runner.StepRunnerFactory")
+    mock_factory.get.return_value = mock_runner
+
+    step = Step(type="pipeline", custom="imported")
+    exit_code = PipelineStepRunner(step, ctx).run()
+
+    assert exit_code == 0
+    mock_resolve.assert_called_once()
+    # The resolved child's step is executed, and the trigger stack is restored.
+    mock_factory.get.assert_called_once()
+    assert ctx.pipeline_call_stack == ["custom.parent"]

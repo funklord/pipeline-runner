@@ -23,8 +23,8 @@ from .errors import (
     InvalidPipelineError,
     PipelineCycleError,
     UndefinedOutputVariablesError,
-    UnsupportedPipelineImportError,
 )
+from .imports import resolve_pipeline_import
 from .models import (
     Image,
     ParallelStep,
@@ -569,7 +569,10 @@ class PipelineStepRunner(BaseStepRunner):
             raise InvalidPipelineError(target, available)
 
         if isinstance(child_pipeline, PipelineImport):
-            raise UnsupportedPipelineImportError(target, child_pipeline.source)
+            assert spec is not None  # noqa: S101  # guaranteed: child_pipeline came from spec
+            child_pipeline = resolve_pipeline_import(
+                child_pipeline, spec, self._pipeline_ctx.repository.path, pipeline_name=target
+            )
 
         call_stack = self._pipeline_ctx.pipeline_call_stack
         if target in call_stack:

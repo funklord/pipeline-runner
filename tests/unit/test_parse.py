@@ -530,6 +530,7 @@ def test_parse_pipeline_with_env_vars() -> None:
                     "memory": 1024,
                 }
             },
+            "imports": {},
         },
         "clone": {"depth": None, "lfs": None, "enabled": None},
         "options": {

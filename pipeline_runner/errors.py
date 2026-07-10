@@ -48,6 +48,11 @@ class UnsupportedPipelineImportError(UsageError, ValueError):
         )
 
 
+class ImportResolutionError(UsageError, ValueError):
+    def __init__(self, pipeline_name: str, source: str, reason: str) -> None:
+        super().__init__(f"Could not resolve import for pipeline '{pipeline_name}' ('{source}'): {reason}")
+
+
 class NegativeIntegerError(ValueError):
     def __init__(self) -> None:
         super().__init__("value must be a positive integer")

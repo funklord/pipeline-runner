@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING
 from dotenv import dotenv_values
 from slugify import slugify
 
-from pipeline_runner.errors import InvalidPipelineError, UnsupportedPipelineImportError
+from pipeline_runner.errors import InvalidPipelineError
 
 from . import utils
 from .config import DEFAULT_CACHES, DEFAULT_SERVICES
+from .imports import resolve_pipeline_import
 from .models import (
     CacheType,
     CloneSettings,
@@ -84,7 +85,9 @@ class PipelineRunContext:
             raise InvalidPipelineError(pipeline_name, valid_pipelines)
 
         if isinstance(pipeline_to_run, PipelineImport):
-            raise UnsupportedPipelineImportError(pipeline_name, pipeline_to_run.source)
+            pipeline_to_run = resolve_pipeline_import(
+                pipeline_to_run, spec, req.repository_path, pipeline_name=pipeline_name
+            )
 
         workspace_meta = WorkspaceMetadata.load_from_file(req.repository_path)
         project_meta = ProjectMetadata.load_from_file(req.repository_path)

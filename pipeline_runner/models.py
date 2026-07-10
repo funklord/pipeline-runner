@@ -131,6 +131,7 @@ CacheType = Cache | str
 class Definitions(BaseModel):
     caches: dict[str, CacheType] = Field(default_factory=dict)
     services: dict[str, Service] = Field(default_factory=dict)
+    imports: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("services")
     def ensure_default_services_have_no_image_and_non_default_services_have_an_image(

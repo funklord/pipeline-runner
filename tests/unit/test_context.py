@@ -473,7 +473,7 @@ def test_pipeline_run_context_rejects_imported_pipeline(
             pipelines:
               custom:
                 imported:
-                  import: shared-pipeline@shared-slug
+                  import: other-repo:main:some-pipeline
             """)
     )
 
@@ -482,5 +482,5 @@ def test_pipeline_run_context_rejects_imported_pipeline(
         repository_path=repository_path.as_posix(),
     )
 
-    with pytest.raises(UnsupportedPipelineImportError, match="shared-pipeline@shared-slug"):
+    with pytest.raises(UnsupportedPipelineImportError, match="other-repo:main:some-pipeline"):
         PipelineRunContext.from_run_request(run_request)
