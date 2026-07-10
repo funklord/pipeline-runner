@@ -571,6 +571,9 @@ def test_parse_pipeline_with_env_vars() -> None:
                         "oidc": False,
                         "output-variables": [],
                         "runtime": None,
+                        "type": "inline",
+                        "custom": None,
+                        "variables": [],
                     },
                 },
                 {
@@ -603,6 +606,9 @@ def test_parse_pipeline_with_env_vars() -> None:
                                 "oidc": False,
                                 "output-variables": [],
                                 "runtime": None,
+                                "type": "inline",
+                                "custom": None,
+                                "variables": [],
                             }
                         },
                         {
@@ -633,6 +639,9 @@ def test_parse_pipeline_with_env_vars() -> None:
                                 "oidc": False,
                                 "output-variables": [],
                                 "runtime": None,
+                                "type": "inline",
+                                "custom": None,
+                                "variables": [],
                             }
                         },
                     ],
@@ -680,3 +689,86 @@ def test_parse_pipeline_with_anchors() -> None:
     assert steps[0].step.name == "Build and test"
 
     assert model.pipelines.branches["develop"] == model.pipelines.branches["main"]
+
+
+def test_parse_pipeline_step() -> None:
+    spec = {"name": "Trigger child", "type": "pipeline", "custom": "child-pipeline"}
+
+    step = Step.model_validate(spec)
+
+    assert step.type == "pipeline"
+    assert step.is_pipeline_step is True
+    assert step.custom == "child-pipeline"
+    assert step.script == []
+
+
+def test_parse_pipeline_step_with_variables() -> None:
+    spec = {
+        "type": "pipeline",
+        "custom": "child-pipeline",
+        "variables": [
+            {"name": "FOO", "value": "bar"},
+            {"name": "BAZ", "value": "qux"},
+        ],
+    }
+
+    step = Step.model_validate(spec)
+
+    assert step.is_pipeline_step is True
+    assert [(v.name, v.value) for v in step.variables] == [("FOO", "bar"), ("BAZ", "qux")]
+
+
+def test_parse_regular_step_defaults_to_inline_type() -> None:
+    step = Step.model_validate({"script": ["true"]})
+
+    assert step.type == "inline"
+    assert step.is_pipeline_step is False
+    assert step.custom is None
+
+
+def test_parse_pipeline_step_requires_custom() -> None:
+    with pytest.raises(ValidationError, match="requires a 'custom'"):
+        Step.model_validate({"type": "pipeline"})
+
+
+def test_parse_pipeline_step_cannot_have_a_script() -> None:
+    with pytest.raises(ValidationError, match="cannot define a 'script'"):
+        Step.model_validate({"type": "pipeline", "custom": "child", "script": ["true"]})
+
+
+def test_parse_inline_step_still_requires_a_script() -> None:
+    with pytest.raises(ValidationError, match="requires a 'script'"):
+        Step.model_validate({"name": "no script here"})
+
+
+def test_parse_custom_is_rejected_on_inline_step() -> None:
+    with pytest.raises(ValidationError, match="only valid on a step with 'type: pipeline'"):
+        Step.model_validate({"script": ["true"], "custom": "child"})
+
+
+def test_parse_pipeline_step_within_a_full_spec() -> None:
+    spec = {
+        "pipelines": {
+            "custom": {
+                "parent": [
+                    {"step": {"name": "prepare", "script": ["make prepare"]}},
+                    {"step": {"type": "pipeline", "custom": "child"}},
+                ],
+                "child": [
+                    {"step": {"name": "build", "script": ["make build"]}},
+                ],
+            }
+        }
+    }
+
+    parsed = PipelineSpec.model_validate(spec)
+
+    parent = parsed.get_pipeline("custom.parent")
+    assert parent is not None
+
+    parent_steps = parent.get_steps()
+    assert isinstance(parent_steps[1], StepWrapper)
+    assert parent_steps[1].step.is_pipeline_step is True
+    assert parent_steps[1].step.custom == "child"
+
+    assert parsed.get_pipeline("custom.child") is not None

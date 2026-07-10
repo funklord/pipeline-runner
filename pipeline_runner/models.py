@@ -4,7 +4,7 @@ from collections.abc import Iterator, Sequence
 from enum import Enum
 from pathlib import Path
 from string import Template
-from typing import TYPE_CHECKING, Any, Generic, SupportsIndex, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, SupportsIndex, TypeVar
 from uuid import UUID, uuid4
 
 from git.repo import Repo
@@ -327,9 +327,25 @@ class Artifacts(BaseModel):
         return data
 
 
+class PipelineStepVariable(BaseModel):
+    """A ``name``/``value`` pair passed from a parent step to a triggered child pipeline."""
+
+    name: str
+    value: str
+
+    __env_var_expand_fields__: Sequence[str] = ["value"]
+
+
+StepType = Literal["inline", "pipeline"]
+
+
 class Step(BaseModel):
     name: str = "<unnamed>"
-    script: list[str | Pipe]
+    # `script` is required for regular (inline) steps but must be absent for `type: pipeline`
+    # steps, which trigger another pipeline instead of executing a script. The invariant is
+    # enforced in `validate_step_type` below (using `model_fields_set` so that omitting the
+    # `script` key on an inline step is still an error, exactly like before).
+    script: list[str | Pipe] = Field(default_factory=list)
     image: Image | None = None
     caches: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
@@ -345,6 +361,13 @@ class Step(BaseModel):
     output_variables: list[str] = Field(default_factory=list, alias="output-variables")
     runtime: Runtime | None = None
 
+    # Child pipeline support (Bitbucket "pipeline step"). A step with `type: pipeline` does not
+    # run a script; it triggers the custom pipeline named in `custom`, optionally forwarding the
+    # `variables` below to it.
+    type: StepType = "inline"
+    custom: str | None = None
+    variables: list[PipelineStepVariable] = Field(default_factory=list)
+
     __env_var_expand_fields__: Sequence[str] = ["image"]
 
     @field_validator("image", mode="before")
@@ -353,6 +376,27 @@ class Step(BaseModel):
             return Image(name=value)
 
         return value
+
+    @model_validator(mode="after")
+    def validate_step_type(self) -> "Self":
+        if self.type == "pipeline":
+            if not self.custom:
+                raise ValueError("A step with 'type: pipeline' requires a 'custom' pipeline to trigger")
+            if "script" in self.model_fields_set:
+                raise ValueError("A step with 'type: pipeline' cannot define a 'script'")
+        else:
+            if "script" not in self.model_fields_set:
+                raise ValueError("A step requires a 'script'")
+            if self.custom is not None:
+                raise ValueError("'custom' is only valid on a step with 'type: pipeline'")
+            if self.variables:
+                raise ValueError("'variables' is only valid on a step with 'type: pipeline'")
+
+        return self
+
+    @property
+    def is_pipeline_step(self) -> bool:
+        return self.type == "pipeline"
 
     @property
     def size_multiplier(self) -> int:

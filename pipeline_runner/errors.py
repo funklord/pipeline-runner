@@ -34,6 +34,11 @@ class InvalidServiceError(UsageError, ValueError):
         super().__init__(f"Invalid service: {service_name}")
 
 
+class PipelineCycleError(UsageError, ValueError):
+    def __init__(self, chain: list[str]) -> None:
+        super().__init__(f"Pipeline trigger cycle detected: {' -> '.join(chain)}")
+
+
 class NegativeIntegerError(ValueError):
     def __init__(self) -> None:
         super().__init__("value must be a positive integer")

@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+import re
 import time
 from concurrent.futures import Future
 from logging import Logger
@@ -15,8 +16,21 @@ from faker.proxy import Faker
 from pytest_mock import MockerFixture
 
 from pipeline_runner.context import PipelineRunContext
-from pipeline_runner.models import Stage, StepWrapper, Trigger
-from pipeline_runner.runner import StageRunner, StepRunner
+from pipeline_runner.errors import PipelineCycleError
+from pipeline_runner.models import (
+    PipelineStepVariable,
+    Stage,
+    Step,
+    StepWrapper,
+    Trigger,
+    Variable,
+)
+from pipeline_runner.runner import (
+    PipelineStepRunner,
+    StageRunner,
+    StepRunner,
+    StepRunnerFactory,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -317,3 +331,119 @@ def test_stage_runner_waits_for_input_on_manual_trigger(monkeypatch: MonkeyPatch
 
     assert res == 0
     mock_factory.get.assert_called_once_with(step, ctx)
+
+
+def _make_pipeline_ctx(mocker: MockerFixture, child_pipeline: object, call_stack: list[str]) -> MagicMock:
+    spec = mocker.MagicMock()
+    spec.get_pipeline.return_value = child_pipeline
+    spec.get_available_pipelines.return_value = ["custom.child"]
+
+    ctx = MagicMock(spec=PipelineRunContext)
+    ctx.spec = spec
+    ctx.pipeline_call_stack = call_stack
+    ctx.pipeline_variables = {}
+    return ctx
+
+
+def test_pipeline_step_runner_runs_all_steps_of_child_pipeline(mocker: MockerFixture) -> None:
+    child_step1 = MagicMock(spec=StepWrapper)
+    child_step2 = MagicMock(spec=StepWrapper)
+
+    child_pipeline = mocker.MagicMock()
+    child_pipeline.get_steps.return_value = [child_step1, child_step2]
+    child_pipeline.get_variables.return_value = []
+
+    ctx = _make_pipeline_ctx(mocker, child_pipeline, ["custom.parent"])
+
+    mock_runner = MagicMock(spec=StepRunner)
+    mock_runner.run.return_value = 0
+    mock_factory = mocker.patch("pipeline_runner.runner.StepRunnerFactory")
+    mock_factory.get.return_value = mock_runner
+
+    step = Step(type="pipeline", custom="child")
+    exit_code = PipelineStepRunner(step, ctx).run()
+
+    assert exit_code == 0
+    assert mock_factory.get.call_count == 2
+    mock_factory.get.assert_any_call(child_step1, ctx)
+    mock_factory.get.assert_any_call(child_step2, ctx)
+    # The call stack must be restored after the child pipeline completes.
+    assert ctx.pipeline_call_stack == ["custom.parent"]
+
+
+def test_pipeline_step_runner_stops_on_first_failure(mocker: MockerFixture) -> None:
+    child_pipeline = mocker.MagicMock()
+    child_pipeline.get_steps.return_value = [
+        MagicMock(spec=StepWrapper),
+        MagicMock(spec=StepWrapper),
+        MagicMock(spec=StepWrapper),
+    ]
+    child_pipeline.get_variables.return_value = []
+
+    ctx = _make_pipeline_ctx(mocker, child_pipeline, ["custom.parent"])
+
+    mock_runner = MagicMock(spec=StepRunner)
+    mock_runner.run.side_effect = [0, 7, 0]
+    mock_factory = mocker.patch("pipeline_runner.runner.StepRunnerFactory")
+    mock_factory.get.return_value = mock_runner
+
+    step = Step(type="pipeline", custom="child")
+    exit_code = PipelineStepRunner(step, ctx).run()
+
+    assert exit_code == 7
+    assert mock_factory.get.call_count == 2
+    assert ctx.pipeline_call_stack == ["custom.parent"]
+
+
+def test_pipeline_step_runner_detects_cycles(mocker: MockerFixture) -> None:
+    child_pipeline = mocker.MagicMock()
+    child_pipeline.get_variables.return_value = []
+
+    # "custom.a" is already on the stack, so triggering it again is a cycle.
+    ctx = _make_pipeline_ctx(mocker, child_pipeline, ["custom.a", "custom.b"])
+
+    step = Step(type="pipeline", custom="a")
+
+    with pytest.raises(PipelineCycleError, match=re.escape("custom.a -> custom.b -> custom.a")):
+        PipelineStepRunner(step, ctx).run()
+
+
+def test_pipeline_step_runner_raises_on_unknown_child_pipeline(mocker: MockerFixture) -> None:
+    ctx = _make_pipeline_ctx(mocker, None, ["custom.parent"])
+
+    step = Step(type="pipeline", custom="does-not-exist")
+
+    with pytest.raises(UsageError, match=re.escape("custom.does-not-exist")):
+        PipelineStepRunner(step, ctx).run()
+
+
+def test_pipeline_step_runner_forwards_variables_to_child(mocker: MockerFixture) -> None:
+    child_pipeline = mocker.MagicMock()
+    child_pipeline.get_steps.return_value = []
+    # Child declares a variable with a default; parent forwards another value.
+    child_pipeline.get_variables.return_value = [Variable(name="DECLARED", default="default-value")]
+
+    ctx = _make_pipeline_ctx(mocker, child_pipeline, ["custom.parent"])
+
+    step = Step(
+        type="pipeline",
+        custom="child",
+        variables=[PipelineStepVariable(name="FORWARDED", value="forwarded-value")],
+    )
+
+    exit_code = PipelineStepRunner(step, ctx).run()
+
+    assert exit_code == 0
+    assert ctx.pipeline_variables == {"DECLARED": "default-value", "FORWARDED": "forwarded-value"}
+
+
+def test_factory_dispatches_pipeline_steps_to_pipeline_step_runner() -> None:
+    ctx = MagicMock(spec=PipelineRunContext)
+
+    pipeline_wrapper = StepWrapper(step=Step(type="pipeline", custom="child"))
+    runner = StepRunnerFactory.get(pipeline_wrapper, ctx)
+    assert isinstance(runner, PipelineStepRunner)
+
+    # A regular inline step must NOT be dispatched to the pipeline-step runner.
+    inline_wrapper = StepWrapper(step=Step(name="inline", script=["true"]))
+    assert inline_wrapper.step.is_pipeline_step is False

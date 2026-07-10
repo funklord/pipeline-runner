@@ -18,11 +18,17 @@ from .cache import CacheManager
 from .config import DEFAULT_IMAGE, config
 from .container import ContainerRunner
 from .context import PipelineRunContext, StepRunContext
-from .errors import InvalidOutputVariablesError, UndefinedOutputVariablesError
+from .errors import (
+    InvalidOutputVariablesError,
+    InvalidPipelineError,
+    PipelineCycleError,
+    UndefinedOutputVariablesError,
+)
 from .models import (
     Image,
     ParallelStep,
     Pipe,
+    Pipeline,
     PipelineResult,
     Stage,
     StageWrapper,
@@ -538,6 +544,66 @@ class StageRunner(BaseStepRunner):
         return self._stage.name in self._pipeline_ctx.selected_stages
 
 
+class PipelineStepRunner(BaseStepRunner):
+    """Runner for a ``type: pipeline`` step, which triggers another (custom) pipeline.
+
+    The child pipeline runs within the *same* :class:`PipelineRunContext`, so variables,
+    artifacts, caches, services and the default image/clone settings are all inherited exactly
+    like they would be for inline steps. A call stack on the context guards against cycles
+    (``A -> B -> A``).
+    """
+
+    def __init__(self, step: Step, pipeline_run_context: PipelineRunContext) -> None:
+        self._step = step
+        self._pipeline_ctx = pipeline_run_context
+
+    def run(self) -> int | None:
+        target = f"custom.{self._step.custom}"
+
+        spec = self._pipeline_ctx.spec
+        child_pipeline = spec.get_pipeline(target) if spec else None
+        if child_pipeline is None:
+            available = sorted(spec.get_available_pipelines()) if spec else []
+            raise InvalidPipelineError(target, available)
+
+        call_stack = self._pipeline_ctx.pipeline_call_stack
+        if target in call_stack:
+            raise PipelineCycleError([*call_stack, target])
+
+        logger.info("Triggering pipeline: %s (from step '%s')", target, self._step.name)
+
+        self._seed_child_variables(child_pipeline)
+
+        call_stack.append(target)
+        try:
+            for element in child_pipeline.get_steps():
+                runner = StepRunnerFactory.get(element, self._pipeline_ctx)
+                exit_code = runner.run()
+                if exit_code:
+                    logger.error("Triggered pipeline '%s': FAIL", target)
+                    return exit_code
+        finally:
+            call_stack.pop()
+
+        return 0
+
+    def _seed_child_variables(self, child_pipeline: "Pipeline") -> None:
+        # Respect the child pipeline's declared variable defaults, then apply the values
+        # forwarded by the triggering step. These share the parent's variable space (a
+        # deliberate simplification over Bitbucket's per-pipeline variable isolation).
+        child_variables: dict[str, str] = {}
+
+        for declared in child_pipeline.get_variables():
+            if declared.default is not None:
+                child_variables[declared.name] = declared.default
+
+        for provided in self._step.variables:
+            child_variables[provided.name] = provided.value
+
+        if child_variables:
+            self._pipeline_ctx.pipeline_variables.update(child_variables)
+
+
 class StepRunnerFactory:
     @staticmethod
     def get(
@@ -548,6 +614,9 @@ class StepRunnerFactory:
     ) -> BaseStepRunner:
         match item:
             case StepWrapper():
+                if item.step.is_pipeline_step:
+                    return PipelineStepRunner(item.step, pipeline_run_context)
+
                 return StepRunner(
                     StepRunContext(item.step, pipeline_run_context, parallel_step_index, parallel_step_count)
                 )

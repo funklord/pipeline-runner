@@ -17,6 +17,7 @@ from .models import (
     Image,
     Options,
     Pipeline,
+    PipelineSpec,
     ProjectMetadata,
     Repository,
     Service,
@@ -47,6 +48,9 @@ class PipelineRunContext:
     env_vars: dict[str, str] = field(default_factory=dict)
     selected_steps: list[str] = field(default_factory=list)
     selected_stages: list[str] = field(default_factory=list)
+    # Full spec, needed to resolve `type: pipeline` steps to their target custom pipeline.
+    # Optional so that unit tests can build a context without a full spec.
+    spec: PipelineSpec | None = field(default=None)
 
     def __post_init__(
         self,
@@ -56,6 +60,11 @@ class PipelineRunContext:
 
         self.pipeline_uuid = uuid.uuid4()
         self.pipeline_variables: dict[str, str] = {}
+
+        # Names of the pipelines currently on the trigger stack (used for cycle detection when
+        # a `type: pipeline` step triggers a child pipeline). Seeded with the top-level pipeline
+        # so a child that triggers it back is detected.
+        self.pipeline_call_stack: list[str] = [self.pipeline_name]
 
         self._data_directory = self.get_pipeline_data_directory()
         self._cache_directory = utils.get_project_cache_directory(self.project_metadata.path_slug)
@@ -91,6 +100,7 @@ class PipelineRunContext:
             env_vars=env_vars,
             selected_steps=req.selected_steps,
             selected_stages=req.selected_stages,
+            spec=spec,
         )
 
     @staticmethod
