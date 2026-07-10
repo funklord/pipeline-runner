@@ -567,19 +567,39 @@ class Pipeline(RootModel[list[PipelineElement]]):
             s.expand_env_vars(variables)
 
 
-class Pipelines(BaseModel):
-    default: Pipeline | None = None
-    branches: dict[str, Pipeline] = Field(default_factory=dict)
-    pull_requests: dict[str, Pipeline] = Field(default_factory=dict, alias="pull-requests")
-    custom: dict[str, Pipeline] = Field(default_factory=dict)
-    tags: dict[str, Pipeline] = Field(default_factory=dict)
-    bookmarks: dict[str, Pipeline] = Field(default_factory=dict)
+class PipelineImport(BaseModel):
+    """A pipeline whose definition is imported from a shared configuration.
 
-    def get_all(self) -> dict[str, Pipeline]:
-        pipelines = {}
+    Bitbucket's "shared pipelines" feature lets a pipeline be replaced by an import reference,
+    e.g. ``import: my-pipeline@shared-slug`` (imported from within the workspace, resolved via
+    ``definitions.imports``) or ``import: repo:branch:my-pipeline`` (imported from another repo).
+
+    pipeline-runner can parse and list these, but the referenced definition lives in an external
+    shared configuration that can't be resolved locally, so imported pipelines can't be executed.
+    """
+
+    source: str = Field(alias="import")
+
+    __env_var_expand_fields__: Sequence[str] = []
+
+
+# A pipeline is either an inline list of steps or a reference imported from a shared config.
+PipelineDefinition = Pipeline | PipelineImport
+
+
+class Pipelines(BaseModel):
+    default: PipelineDefinition | None = None
+    branches: dict[str, PipelineDefinition] = Field(default_factory=dict)
+    pull_requests: dict[str, PipelineDefinition] = Field(default_factory=dict, alias="pull-requests")
+    custom: dict[str, PipelineDefinition] = Field(default_factory=dict)
+    tags: dict[str, PipelineDefinition] = Field(default_factory=dict)
+    bookmarks: dict[str, PipelineDefinition] = Field(default_factory=dict)
+
+    def get_all(self) -> dict[str, PipelineDefinition]:
+        pipelines: dict[str, PipelineDefinition] = {}
         for attr in self.model_fields_set:
             value = getattr(self, attr)
-            if isinstance(value, Pipeline):
+            if isinstance(value, (Pipeline, PipelineImport)):
                 pipelines[attr] = value
             elif isinstance(value, dict):
                 for k, v in value.items():
@@ -617,7 +637,7 @@ class PipelineSpec(BaseModel):
     def services(self) -> dict[str, Service]:
         return self.definitions.services
 
-    def get_pipeline(self, name: str) -> Pipeline | None:
+    def get_pipeline(self, name: str) -> PipelineDefinition | None:
         return self.pipelines.get_all().get(name)
 
     def get_available_pipelines(self) -> list[str]:

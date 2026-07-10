@@ -39,6 +39,15 @@ class PipelineCycleError(UsageError, ValueError):
         super().__init__(f"Pipeline trigger cycle detected: {' -> '.join(chain)}")
 
 
+class UnsupportedPipelineImportError(UsageError, ValueError):
+    def __init__(self, pipeline_name: str, source: str) -> None:
+        super().__init__(
+            f"Pipeline '{pipeline_name}' is imported from a shared configuration ('{source}'). "
+            "pipeline-runner can't resolve shared pipeline imports locally, so imported pipelines "
+            "can be listed but not run."
+        )
+
+
 class NegativeIntegerError(ValueError):
     def __init__(self) -> None:
         super().__init__("value must be a positive integer")

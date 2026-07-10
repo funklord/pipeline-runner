@@ -14,6 +14,7 @@ from pipeline_runner.models import (
     ParallelSteps,
     Pipe,
     Pipeline,
+    PipelineImport,
     Pipelines,
     PipelineSpec,
     Service,
@@ -772,3 +773,54 @@ def test_parse_pipeline_step_within_a_full_spec() -> None:
     assert parent_steps[1].step.custom == "child"
 
     assert parsed.get_pipeline("custom.child") is not None
+
+
+def test_parse_custom_pipeline_import() -> None:
+    spec = {
+        "pipelines": {
+            "custom": {
+                "imported": {"import": "shared-pipeline@shared-slug"},
+                "local": [{"step": {"name": "s", "script": ["true"]}}],
+            }
+        }
+    }
+
+    parsed = PipelineSpec.model_validate(spec)
+
+    imported = parsed.get_pipeline("custom.imported")
+    assert isinstance(imported, PipelineImport)
+    assert imported.source == "shared-pipeline@shared-slug"
+
+    # A regular step-list pipeline is still parsed as a Pipeline, not an import.
+    local = parsed.get_pipeline("custom.local")
+    assert isinstance(local, Pipeline)
+
+    # Both imported and inline pipelines are listed.
+    assert set(parsed.get_available_pipelines()) == {"custom.imported", "custom.local"}
+
+
+def test_parse_cross_repo_pipeline_import() -> None:
+    spec = {"pipelines": {"custom": {"imported": {"import": "repo:branch:pipeline-name"}}}}
+
+    parsed = PipelineSpec.model_validate(spec)
+
+    imported = parsed.get_pipeline("custom.imported")
+    assert isinstance(imported, PipelineImport)
+    assert imported.source == "repo:branch:pipeline-name"
+
+
+def test_parse_pipeline_import_requires_import_key() -> None:
+    # A mapping that is neither a step list nor a valid import must be rejected.
+    with pytest.raises(ValidationError):
+        PipelineSpec.model_validate({"pipelines": {"custom": {"bad": {"not-import": "x"}}}})
+
+
+def test_pipeline_import_expand_env_vars_is_a_noop() -> None:
+    parsed = PipelineSpec.model_validate({"pipelines": {"custom": {"imported": {"import": "a@b"}}}})
+
+    # Must not raise: the whole spec is walked for env var expansion.
+    parsed.expand_env_vars({"FOO": "bar"})
+
+    imported = parsed.get_pipeline("custom.imported")
+    assert isinstance(imported, PipelineImport)
+    assert imported.source == "a@b"

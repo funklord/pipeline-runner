@@ -9,6 +9,7 @@ from faker import Faker
 from pytest_mock import MockerFixture
 
 from pipeline_runner.context import PipelineRunContext, StepRunContext
+from pipeline_runner.errors import UnsupportedPipelineImportError
 from pipeline_runner.models import (
     CloneSettings,
     CloudRuntime,
@@ -454,3 +455,32 @@ def test_should_install_docker_client(faker: Faker, subtests: Subtests) -> None:
         )
 
         assert ctx.should_install_docker_client()
+
+
+def test_pipeline_run_context_rejects_imported_pipeline(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    # Needed because the fake repo path doesn't contain a git repo
+    mocker.patch("pipeline_runner.models.Repo")
+
+    repository_path = tmp_path / "repository"
+    repository_path.mkdir()
+
+    pipeline_file = repository_path / "bitbucket-pipelines.yml"
+    pipeline_file.write_text(
+        dedent("""
+            pipelines:
+              custom:
+                imported:
+                  import: shared-pipeline@shared-slug
+            """)
+    )
+
+    run_request = PipelineRunRequest(
+        pipeline_name="custom.imported",
+        repository_path=repository_path.as_posix(),
+    )
+
+    with pytest.raises(UnsupportedPipelineImportError, match="shared-pipeline@shared-slug"):
+        PipelineRunContext.from_run_request(run_request)

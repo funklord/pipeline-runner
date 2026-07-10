@@ -23,12 +23,14 @@ from .errors import (
     InvalidPipelineError,
     PipelineCycleError,
     UndefinedOutputVariablesError,
+    UnsupportedPipelineImportError,
 )
 from .models import (
     Image,
     ParallelStep,
     Pipe,
     Pipeline,
+    PipelineImport,
     PipelineResult,
     Stage,
     StageWrapper,
@@ -565,6 +567,9 @@ class PipelineStepRunner(BaseStepRunner):
         if child_pipeline is None:
             available = sorted(spec.get_available_pipelines()) if spec else []
             raise InvalidPipelineError(target, available)
+
+        if isinstance(child_pipeline, PipelineImport):
+            raise UnsupportedPipelineImportError(target, child_pipeline.source)
 
         call_stack = self._pipeline_ctx.pipeline_call_stack
         if target in call_stack:

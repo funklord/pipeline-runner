@@ -16,8 +16,9 @@ from faker.proxy import Faker
 from pytest_mock import MockerFixture
 
 from pipeline_runner.context import PipelineRunContext
-from pipeline_runner.errors import PipelineCycleError
+from pipeline_runner.errors import PipelineCycleError, UnsupportedPipelineImportError
 from pipeline_runner.models import (
+    PipelineImport,
     PipelineStepVariable,
     Stage,
     Step,
@@ -447,3 +448,13 @@ def test_factory_dispatches_pipeline_steps_to_pipeline_step_runner() -> None:
     # A regular inline step must NOT be dispatched to the pipeline-step runner.
     inline_wrapper = StepWrapper(step=Step(name="inline", script=["true"]))
     assert inline_wrapper.step.is_pipeline_step is False
+
+
+def test_pipeline_step_runner_rejects_imported_child_pipeline(mocker: MockerFixture) -> None:
+    imported_child = PipelineImport(**{"import": "shared@slug"})
+    ctx = _make_pipeline_ctx(mocker, imported_child, ["custom.parent"])
+
+    step = Step(type="pipeline", custom="imported")
+
+    with pytest.raises(UnsupportedPipelineImportError, match="shared@slug"):
+        PipelineStepRunner(step, ctx).run()
