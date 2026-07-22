@@ -57,6 +57,27 @@ def test_repository_get_current_commit_works_when_detached(tmp_path: Path) -> No
     assert Repository(str(tmp_path)).get_current_commit() == sha
 
 
+def test_repository_get_external_git_dir_is_none_for_an_ordinary_repo(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+
+    assert Repository(str(tmp_path)).get_external_git_dir() is None
+
+
+def test_repository_get_external_git_dir_points_at_the_main_checkout_for_a_worktree(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    repo = Repo.init(main, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+
+    worktree = tmp_path / "worktree"
+    repo.git.worktree("add", str(worktree), "-b", "wt-branch")
+
+    external_git_dir = Repository(str(worktree)).get_external_git_dir()
+
+    assert external_git_dir is not None
+    assert Path(external_git_dir).resolve() == (main / ".git").resolve()
+
+
 def test_model_extra_keys_are_ignored() -> None:
     spec: dict[str, Any] = {
         "default": [

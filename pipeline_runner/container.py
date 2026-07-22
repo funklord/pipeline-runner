@@ -58,6 +58,7 @@ class ContainerRunner:
         self._image = image
         self._network_name = network_name
         self._repository_path = ctx.pipeline_ctx.repository.path
+        self._external_git_dir = ctx.pipeline_ctx.repository.get_external_git_dir()
         self._data_volume_name = data_volume_name
         self._environment = env_vars
         self._logger = output_logger
@@ -270,6 +271,10 @@ class ContainerRunner:
                 self._data_volume_name: {"bind": config.remote_pipeline_dir},
             }
         )
+        if self._external_git_dir is not None:
+            # Mounted at the same absolute path it has on the host, since that's the path baked
+            # into the worktree's `.git` pointer file, which git resolves as-is.
+            volumes[self._external_git_dir] = {"bind": self._external_git_dir, "mode": "ro"}
         if self._pipeline_variables_file is not None:
             volumes[str(self._pipeline_variables_file)] = {"bind": f"{config.temp_dir}/pipeline-variables.env"}
 

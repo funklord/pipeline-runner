@@ -725,6 +725,24 @@ class Repository:
     def get_current_commit(self) -> str:
         return self._git_repo.head.commit.hexsha
 
+    def get_external_git_dir(self) -> str | None:
+        """Absolute host path of the repository's real git directory, if it lives outside `path`.
+
+        A linked worktree's `.git` is a pointer file containing an *absolute* path to its git dir
+        under the main checkout's `.git/worktrees/<name>`, which in turn points back to the main
+        `.git` for shared objects/refs via a `commondir` file. None of that is reachable if only
+        `path` gets bind-mounted somewhere else, since the pointer path won't resolve inside the
+        container. Returns the common git dir to mount (at the same absolute path) alongside
+        `path` so it does, or None for an ordinary repository where `path` is self-contained.
+        """
+        common_dir = os.path.realpath(self._git_repo.common_dir)
+        repo_path = os.path.realpath(self.path)
+
+        if common_dir == repo_path or common_dir.startswith(repo_path + os.sep):
+            return None
+
+        return common_dir
+
 
 class PipelineResult:
     def __init__(self, exit_code: int, build_number: int, pipeline_uuid: UUID) -> None:
