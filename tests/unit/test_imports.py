@@ -3,9 +3,10 @@ from textwrap import dedent
 
 import pytest
 
+from pipeline_runner.config import DEFAULT_IMAGE
 from pipeline_runner.errors import ImportResolutionError, UnsupportedPipelineImportError
 from pipeline_runner.imports import resolve_pipeline_import
-from pipeline_runner.models import Pipeline, PipelineImport, PipelineSpec, StepWrapper
+from pipeline_runner.models import Image, Pipeline, PipelineImport, PipelineSpec, StepWrapper
 
 
 def _spec(imports: dict[str, str]) -> PipelineSpec:
@@ -104,6 +105,42 @@ def test_resolve_applies_exporting_image_to_steps_without_one(tmp_path: Path) ->
     assert isinstance(steps[1], StepWrapper)
     assert steps[0].step.image is not None
     assert steps[0].step.image.name == "debian:trixie"
+    assert steps[1].step.image is not None
+    assert steps[1].step.image.name == "alpine"
+
+
+def test_resolve_falls_back_to_platform_default_image_when_exporting_file_has_none(
+    tmp_path: Path,
+) -> None:
+    # The exporting file declares no top-level `image:`. Steps without their own image must get
+    # the platform default, not silently inherit the *importing* spec's image below.
+    (tmp_path / "shared.yml").write_text(
+        dedent("""
+            definitions:
+              pipelines:
+                mypipe:
+                  - step:
+                      name: inherits
+                      script:
+                        - echo a
+                  - step:
+                      name: keeps-own
+                      image: alpine
+                      script:
+                        - echo b
+        """)
+    )
+
+    spec = _spec({"src": "shared.yml"})
+    spec.image = Image(name="debian:trixie")
+
+    resolved = resolve_pipeline_import(_import("mypipe@src"), spec, str(tmp_path), pipeline_name="custom.x")
+
+    steps = resolved.get_steps()
+    assert isinstance(steps[0], StepWrapper)
+    assert isinstance(steps[1], StepWrapper)
+    assert steps[0].step.image is not None
+    assert steps[0].step.image.name == DEFAULT_IMAGE
     assert steps[1].step.image is not None
     assert steps[1].step.image.name == "alpine"
 

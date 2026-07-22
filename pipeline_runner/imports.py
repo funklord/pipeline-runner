@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from .config import DEFAULT_IMAGE
 from .errors import ImportResolutionError, UnsupportedPipelineImportError
 from .models import (
     Definitions,
@@ -87,11 +88,13 @@ def resolve_pipeline_import(
         raise ImportResolutionError(pipeline_name, imp.source, str(e)) from e
 
     # Bitbucket takes global options (image) and definitions (caches, services) from the exporting
-    # file, not the importing one. Apply the exporting image to steps that don't set their own, and
-    # make the exporting caches/services available so steps referencing them resolve.
-    exporting_image = data.get("image")
-    if exporting_image is not None:
-        _apply_default_image(pipeline, exporting_image)
+    # file, not the importing one. If the exporting file doesn't declare its own image, Bitbucket
+    # falls back to the platform default image rather than the importing file's — an imported step
+    # must never silently inherit an image from the file that imports it. Apply the exporting image
+    # (or that platform default) to steps that don't set their own, and make the exporting
+    # caches/services available so steps referencing them resolve.
+    exporting_image = data.get("image") or DEFAULT_IMAGE
+    _apply_default_image(pipeline, exporting_image)
 
     _merge_definitions(spec, data.get("definitions") or {})
 
