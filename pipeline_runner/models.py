@@ -725,23 +725,31 @@ class Repository:
     def get_current_commit(self) -> str:
         return self._git_repo.head.commit.hexsha
 
-    def get_external_git_dir(self) -> str | None:
-        """Absolute host path of the repository's real git directory, if it lives outside `path`.
+    def create_local_clone(self, dest_dir: str, *, branch: str | None, depth: str | int | None) -> None:
+        """Create a small, disposable bare clone of this repository at `dest_dir`, on the host.
 
-        A linked worktree's `.git` is a pointer file containing an *absolute* path to its git dir
-        under the main checkout's `.git/worktrees/<name>`, which in turn points back to the main
-        `.git` for shared objects/refs via a `commondir` file. None of that is reachable if only
-        `path` gets bind-mounted somewhere else, since the pointer path won't resolve inside the
-        container. Returns the common git dir to mount (at the same absolute path) alongside
-        `path` so it does, or None for an ordinary repository where `path` is self-contained.
+        This is a one-time transfer artifact meant to be archived and handed to a container (see
+        RepositoryCloner), not a live view of the real repository: a bind mount would expose the
+        repository's actual working directory (or, for a linked worktree, an absolute path
+        pointing back out to the main checkout - unusable once mounted somewhere else), and would
+        need read access to it granted to the container runtime. Cloning runs here, on the host,
+        as the invoking user, with no such requirement - `branch`/`depth` mirror `git clone`'s own
+        options and only affect how much history the *copy* contains.
+
+        `file://` (rather than a bare path) is required for `depth` to take effect - git silently
+        ignores `--depth` for what it considers a "local" clone otherwise. This works the same for
+        an ordinary repository or a worktree either way, since it's the real git command resolving
+        `self.path`, exactly as it would from a plain shell.
         """
-        common_dir = os.path.realpath(self._git_repo.common_dir)
-        repo_path = os.path.realpath(self.path)
+        args = ["--bare"]
+        if branch:
+            args += ["--branch", branch]
+        if depth:
+            args += ["--depth", str(depth)]
 
-        if common_dir == repo_path or common_dir.startswith(repo_path + os.sep):
-            return None
+        args += [f"file://{self.path}", dest_dir]
 
-        return common_dir
+        self._git_repo.git.clone(*args)
 
 
 class PipelineResult:

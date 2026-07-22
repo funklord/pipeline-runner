@@ -1,9 +1,16 @@
+import io
 import logging
-from typing import TypeVar, cast
+import tarfile
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from .config import config
 from .context import StepRunContext
 from .models import CloneSettings, Image
+
+if TYPE_CHECKING:
+    from .container import ContainerRunner
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +61,12 @@ class RepositoryCloner:
         runner.start()
 
         try:
+            self._upload_repository(runner)
+
+            # The uploaded copy's ownership won't generally match whatever user the container
+            # runs as - bypass git's ownership check rather than try to get it exactly right.
             exec_result = runner.run_command(
-                f"git config --system --add safe.directory '{config.remote_workspace_dir}/.git'", user=0
+                f"git config --system --add safe.directory '{config.remote_workspace_dir}'", user=0
             )
             if exec_result.exit_code:
                 raise Exception("Error setting up repository")
@@ -67,6 +78,24 @@ class RepositoryCloner:
                 raise Exception("Error setting up repository")
         finally:
             runner.stop()
+
+    def _upload_repository(self, runner: "ContainerRunner") -> None:
+        """Hand the container its own disposable copy of the repository via the container
+        archive API, instead of bind-mounting the real one in - see Repository.create_local_clone.
+        """
+        branch = self._repository.get_current_branch()
+        depth = self._get_clone_depth()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            local_clone_dir = Path(tmp_dir) / "repo"
+            self._repository.create_local_clone(str(local_clone_dir), branch=branch, depth=depth)
+
+            tar_data = io.BytesIO()
+            with tarfile.open(fileobj=tar_data, mode="w") as tar:
+                tar.add(local_clone_dir, arcname=".")
+
+            if not runner.put_archive(config.remote_workspace_dir, tar_data.getvalue()):
+                raise Exception("Error uploading repository to container")
 
     def _get_clone_script(self) -> list[str]:
         origin = self._get_origin()
@@ -87,7 +116,7 @@ class RepositoryCloner:
     @staticmethod
     def _get_origin() -> str:
         # https://x-token-auth:$REPOSITORY_OAUTH_ACCESS_TOKEN@bitbucket.org/$BITBUCKET_REPO_FULL_NAME.git
-        return f"file://{config.remote_workspace_dir}"
+        return config.remote_workspace_dir
 
     def _get_clone_command(self, origin: str) -> str:
         git_clone_cmd = []
@@ -96,20 +125,9 @@ class RepositoryCloner:
             git_clone_cmd += ["GIT_LFS_SKIP_SMUDGE=1"]
 
         # TODO: Add `retry n`
-        git_clone_cmd += ["git", "clone"]
-
-        # No branch to request on a detached HEAD (e.g. a tag checkout) — a plain clone still
-        # follows the origin's actual HEAD (branch or detached commit), it just isn't restricted
-        # to a single ref up front the way `--branch` would.
-        branch = self._repository.get_current_branch()
-        if branch:
-            git_clone_cmd += [f"--branch='{branch}'"]
-
-        clone_depth = self._get_clone_depth()
-        if clone_depth:
-            git_clone_cmd += ["--depth", str(clone_depth)]
-
-        git_clone_cmd += [origin, "$BUILD_DIR"]
+        # Branch and depth are already baked into the uploaded copy (_upload_repository /
+        # Repository.create_local_clone) - nothing left to restrict here.
+        git_clone_cmd += ["git", "clone", origin, "$BUILD_DIR"]
 
         return " ".join(git_clone_cmd)
 

@@ -234,13 +234,14 @@ def test_cpu_limits_are_applied_if_config_is_set_to_true(config: Config, mocker:
     assert kwargs["cpu_shares"] == 4096
 
 
-def test_get_volumes_mounts_repository_path(config: Config, mocker: MockerFixture, faker: Faker) -> None:
+def test_get_volumes_does_not_bind_mount_the_repository(config: Config, mocker: MockerFixture, faker: Faker) -> None:
+    # RepositoryCloner uploads a disposable copy of the repository via the container archive API
+    # (see Repository.create_local_clone) instead of bind-mounting the real one in, so no host
+    # path for the repository should ever show up here.
     step = Mock()
     step.name = faker.pystr()
 
     ctx = StepRunContext(step=step, pipeline_ctx=Mock())
-    ctx.pipeline_ctx.repository.path = "/repo"
-    ctx.pipeline_ctx.repository.get_external_git_dir.return_value = None
 
     config.volumes = []
 
@@ -257,39 +258,8 @@ def test_get_volumes_mounts_repository_path(config: Config, mocker: MockerFixtur
     volumes = runner._get_volumes()
 
     assert volumes == {
-        "/repo": {"bind": config.remote_workspace_dir, "mode": "ro"},
         "data-volume": {"bind": config.remote_pipeline_dir},
     }
-
-
-def test_get_volumes_also_mounts_external_git_dir_for_worktrees(
-    config: Config, mocker: MockerFixture, faker: Faker
-) -> None:
-    step = Mock()
-    step.name = faker.pystr()
-
-    ctx = StepRunContext(step=step, pipeline_ctx=Mock())
-    ctx.pipeline_ctx.repository.path = "/repo/worktrees/some-branch"
-    ctx.pipeline_ctx.repository.get_external_git_dir.return_value = "/repo/.git"
-
-    config.volumes = []
-
-    runner = ContainerRunner(
-        ctx=ctx,
-        name="container",
-        image=mocker.Mock(),
-        network_name=None,
-        data_volume_name="data-volume",
-        env_vars={},
-        output_logger=mocker.Mock(),
-    )
-
-    volumes = runner._get_volumes()
-
-    assert volumes["/repo/worktrees/some-branch"] == {"bind": config.remote_workspace_dir, "mode": "ro"}
-    # Mounted at the same absolute path as on the host, matching what the worktree's `.git`
-    # pointer file references.
-    assert volumes["/repo/.git"] == {"bind": "/repo/.git", "mode": "ro"}
 
 
 @pytest.mark.parametrize(

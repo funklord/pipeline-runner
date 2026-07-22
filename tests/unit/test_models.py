@@ -57,25 +57,61 @@ def test_repository_get_current_commit_works_when_detached(tmp_path: Path) -> No
     assert Repository(str(tmp_path)).get_current_commit() == sha
 
 
-def test_repository_get_external_git_dir_is_none_for_an_ordinary_repo(tmp_path: Path) -> None:
-    repo = Repo.init(tmp_path, initial_branch="main")
+def test_repository_create_local_clone_copies_full_history_by_default(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    repo = Repo.init(main, initial_branch="main")
     repo.git.commit("--allow-empty", "-m", "c1")
+    repo.git.commit("--allow-empty", "-m", "c2")
 
-    assert Repository(str(tmp_path)).get_external_git_dir() is None
+    dest = tmp_path / "clone"
+    Repository(str(main)).create_local_clone(str(dest), branch="main", depth=None)
+
+    clone = Repo(dest)
+    assert clone.bare
+    assert clone.head.commit.hexsha == repo.head.commit.hexsha
+    assert len(list(clone.iter_commits())) == 2
 
 
-def test_repository_get_external_git_dir_points_at_the_main_checkout_for_a_worktree(tmp_path: Path) -> None:
+def test_repository_create_local_clone_respects_depth(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    repo = Repo.init(main, initial_branch="main")
+    for i in range(5):
+        repo.git.commit("--allow-empty", "-m", f"c{i}")
+
+    dest = tmp_path / "clone"
+    Repository(str(main)).create_local_clone(str(dest), branch="main", depth=2)
+
+    clone = Repo(dest)
+    assert clone.head.commit.hexsha == repo.head.commit.hexsha
+    assert len(list(clone.iter_commits())) == 2
+
+
+def test_repository_create_local_clone_works_when_detached(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    repo = Repo.init(main, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+    sha = repo.head.commit.hexsha
+    repo.git.checkout(sha)
+
+    dest = tmp_path / "clone"
+    Repository(str(main)).create_local_clone(str(dest), branch=None, depth=None)
+
+    assert Repo(dest).head.commit.hexsha == sha
+
+
+def test_repository_create_local_clone_works_from_a_worktree(tmp_path: Path) -> None:
     main = tmp_path / "main"
     repo = Repo.init(main, initial_branch="main")
     repo.git.commit("--allow-empty", "-m", "c1")
 
     worktree = tmp_path / "worktree"
     repo.git.worktree("add", str(worktree), "-b", "wt-branch")
+    wt_sha = Repo(worktree).head.commit.hexsha
 
-    external_git_dir = Repository(str(worktree)).get_external_git_dir()
+    dest = tmp_path / "clone"
+    Repository(str(worktree)).create_local_clone(str(dest), branch="wt-branch", depth=None)
 
-    assert external_git_dir is not None
-    assert Path(external_git_dir).resolve() == (main / ".git").resolve()
+    assert Repo(dest).head.commit.hexsha == wt_sha
 
 
 def test_model_extra_keys_are_ignored() -> None:
