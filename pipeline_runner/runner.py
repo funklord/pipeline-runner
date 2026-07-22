@@ -310,7 +310,6 @@ class StepRunner(BaseStepRunner):
         env_vars: dict[str, str] = {
             "CI": "true",
             "BUILD_DIR": config.build_dir,
-            "BITBUCKET_BRANCH": git_branch,
             "BITBUCKET_BUILD_NUMBER": str(self._ctx.pipeline_ctx.project_metadata.build_number),
             "BITBUCKET_PROJECT_KEY": self._ctx.pipeline_ctx.project_metadata.key,
             "BITBUCKET_PROJECT_UUID": str(self._ctx.pipeline_ctx.project_metadata.project_uuid),
@@ -327,6 +326,11 @@ class StepRunner(BaseStepRunner):
             "BITBUCKET_WORKSPACE": project_slug,
             "BITBUCKET_PIPELINES_VARIABLES_PATH": f"{config.temp_dir}/pipeline-variables.env",
         }
+
+        # No current branch on a detached HEAD (e.g. a tag checkout) — matches real Bitbucket, which
+        # doesn't set BITBUCKET_BRANCH for builds that aren't triggered off a branch.
+        if git_branch:
+            env_vars["BITBUCKET_BRANCH"] = git_branch
 
         if self._ctx.is_parallel():
             env_vars["BITBUCKET_PARALLEL_STEP"] = str(self._ctx.parallel_step_index)

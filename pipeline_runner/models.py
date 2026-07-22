@@ -716,7 +716,10 @@ class Repository:
         self.path = path
         self._git_repo = Repo(path)
 
-    def get_current_branch(self) -> str:
+    def get_current_branch(self) -> str | None:
+        if self._git_repo.head.is_detached:
+            return None
+
         return self._git_repo.active_branch.name
 
     def get_current_commit(self) -> str:

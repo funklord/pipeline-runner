@@ -15,6 +15,35 @@ from pipeline_runner.oidc import OIDCPayload, get_step_oidc_token
 from pipeline_runner.utils import generate_rsa_key
 
 
+@pytest.mark.parametrize("detached", [False, True])
+def test_oidc_payload_new_on_detached_head_uses_empty_branch_claim(
+    mocker: MockerFixture, config: Config, faker: Faker, *, detached: bool
+) -> None:
+    timestamp = datetime.now(tz=timezone.utc)
+    mock_datetime = Mock()
+    mock_datetime.now.return_value = timestamp
+
+    mocker.patch("pipeline_runner.oidc.datetime", mock_datetime)
+
+    config.oidc.issuer = f"https://oidc.{faker.safe_domain_name()}"
+    config.oidc.audience = faker.pystr()
+
+    branch_name = None if detached else faker.pystr()
+
+    step_ctx = Mock()
+    step_ctx.step_uuid = uuid.uuid4()
+    step_ctx.pipeline_ctx.workspace_metadata.owner_uuid = uuid.uuid4()
+    step_ctx.pipeline_ctx.workspace_metadata.workspace_uuid = uuid.uuid4()
+    step_ctx.pipeline_ctx.project_metadata.repo_uuid = uuid.uuid4()
+    step_ctx.pipeline_ctx.pipeline_uuid = uuid.uuid4()
+    step_ctx.pipeline_ctx.repository.get_current_branch.return_value = branch_name
+    step_ctx.step.deployment = None
+
+    payload = OIDCPayload.new(step_ctx)
+
+    assert payload.branch_name == (branch_name or "")
+
+
 @pytest.mark.parametrize("deployment_environment", ([None, "some-env"]))
 def test_oidc_payload_new(
     mocker: MockerFixture, config: Config, faker: Faker, deployment_environment: str | None

@@ -96,8 +96,14 @@ class RepositoryCloner:
             git_clone_cmd += ["GIT_LFS_SKIP_SMUDGE=1"]
 
         # TODO: Add `retry n`
+        git_clone_cmd += ["git", "clone"]
+
+        # No branch to request on a detached HEAD (e.g. a tag checkout) — a plain clone still
+        # follows the origin's actual HEAD (branch or detached commit), it just isn't restricted
+        # to a single ref up front the way `--branch` would.
         branch = self._repository.get_current_branch()
-        git_clone_cmd += ["git", "clone", f"--branch='{branch}'"]
+        if branch:
+            git_clone_cmd += [f"--branch='{branch}'"]
 
         clone_depth = self._get_clone_depth()
         if clone_depth:

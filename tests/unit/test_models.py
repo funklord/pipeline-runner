@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from cryptography.hazmat.primitives import serialization
 from faker import Faker
+from git.repo import Repo
 from pydantic import ValidationError
 
 from pipeline_runner import utils
@@ -23,12 +24,37 @@ from pipeline_runner.models import (
     PipelineResult,
     Pipelines,
     ProjectMetadata,
+    Repository,
     Service,
     Stage,
     Step,
     StepWrapper,
     WorkspaceMetadata,
 )
+
+
+def test_repository_get_current_branch_returns_branch_name(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+
+    assert Repository(str(tmp_path)).get_current_branch() == "main"
+
+
+def test_repository_get_current_branch_returns_none_when_detached(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+    repo.git.checkout(repo.head.commit.hexsha)
+
+    assert Repository(str(tmp_path)).get_current_branch() is None
+
+
+def test_repository_get_current_commit_works_when_detached(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path, initial_branch="main")
+    repo.git.commit("--allow-empty", "-m", "c1")
+    sha = repo.head.commit.hexsha
+    repo.git.checkout(sha)
+
+    assert Repository(str(tmp_path)).get_current_commit() == sha
 
 
 def test_model_extra_keys_are_ignored() -> None:

@@ -53,7 +53,9 @@ class OIDCPayload(BaseModel):
         repository_uuid = f"{{{ctx.pipeline_ctx.project_metadata.repo_uuid}}}"
         pipeline_uuid = f"{{{ctx.pipeline_ctx.pipeline_uuid}}}"
         step_uuid = f"{{{ctx.step_uuid}}}"
-        branch_name = ctx.pipeline_ctx.repository.get_current_branch()
+        # Real Bitbucket's OIDC claims don't cover tag pipelines at all; a detached HEAD has no
+        # branch to report, so fall back to an empty claim rather than crashing.
+        branch_name = ctx.pipeline_ctx.repository.get_current_branch() or ""
 
         if ctx.step.deployment:
             deployment_environment_uuid = f"{{{uuid.uuid5(uuid.NAMESPACE_OID, ctx.step.deployment)}}}"
